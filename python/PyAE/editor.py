@@ -17,7 +17,7 @@ from PySide6.QtGui import (
     QKeySequence, QAction, QPainter, QTextCursor,
     QShortcut, QIcon, QPixmap,
 )
-from PySide6.QtCore import Qt, QRegularExpression, QSize, QRect, QRectF, Signal, QPoint
+from PySide6.QtCore import Qt, QRegularExpression, QSize, QRect, QRectF, Signal, QPoint, QTimer, QThread
 
 SCRIPTS_DIR = Path(os.environ.get('APPDATA', Path.home())) / 'after-effects-python' / 'scripts'
 
@@ -32,9 +32,13 @@ _THEMES = {
         'splitter':  '#444444', 'statusbar': '#007ACC',
         'outliner_bg':'#252526','outliner_fg':'#CCCCCC','outliner_sel':'#094771',
         'btn_bg':    '#3C3C3C', 'btn_hover': '#505050', 'btn_fg': '#CCCCCC',
-        'syn_keyword': '#C586C0', 'syn_builtin': '#DCDCAA',
-        'syn_string':  '#CE9178', 'syn_number':  '#B5CEA8',
-        'syn_comment': '#6A9955',
+        'syn_keyword':  '#C586C0', 'syn_builtin': '#DCDCAA',
+        'syn_string':   '#CE9178', 'syn_number':  '#B5CEA8',
+        'syn_comment':  '#6A9955',
+        'syn_def_name': '#DCDCAA', 'syn_cls_name': '#4EC9B0',
+        'syn_self':     '#9CDCFE', 'syn_deco':     '#C586C0',
+        'syn_const':    '#9CDCFE', 'syn_magic':    '#DCDCAA',
+        'syn_unused':   '#4A4A66',
     },
     'Light': {
         'editor_bg': '#FFFFFF', 'editor_fg': '#1E1E1E',
@@ -44,9 +48,13 @@ _THEMES = {
         'splitter':  '#CCCCCC', 'statusbar': '#0078D4',
         'outliner_bg':'#F3F3F3','outliner_fg':'#1E1E1E','outliner_sel':'#CCE4FF',
         'btn_bg':    '#E0E0E0', 'btn_hover': '#C8C8C8', 'btn_fg': '#1E1E1E',
-        'syn_keyword': '#AF00DB', 'syn_builtin': '#795E26',
-        'syn_string':  '#A31515', 'syn_number':  '#098658',
-        'syn_comment': '#008000',
+        'syn_keyword':  '#AF00DB', 'syn_builtin': '#795E26',
+        'syn_string':   '#A31515', 'syn_number':  '#098658',
+        'syn_comment':  '#008000',
+        'syn_def_name': '#795E26', 'syn_cls_name': '#267F99',
+        'syn_self':     '#0000FF', 'syn_deco':     '#AF00DB',
+        'syn_const':    '#0070C1', 'syn_magic':    '#795E26',
+        'syn_unused':   '#B0B0B0',
     },
     'Aura': {
         'editor_bg': '#15002B', 'editor_fg': '#EDECEE',
@@ -56,9 +64,13 @@ _THEMES = {
         'splitter':  '#3D1A6E', 'statusbar': '#9999FF',
         'outliner_bg':'#1A0035','outliner_fg':'#EDECEE','outliner_sel':'#3D1A6E',
         'btn_bg':    '#2A0055', 'btn_hover': '#3D1A6E', 'btn_fg': '#EDECEE',
-        'syn_keyword': '#FF79C6', 'syn_builtin': '#FFD580',
-        'syn_string':  '#F1FA8C', 'syn_number':  '#BD93F9',
-        'syn_comment': '#7970A9',
+        'syn_keyword':  '#FF79C6', 'syn_builtin': '#FFD580',
+        'syn_string':   '#F1FA8C', 'syn_number':  '#BD93F9',
+        'syn_comment':  '#7970A9',
+        'syn_def_name': '#FFD580', 'syn_cls_name': '#80FFEA',
+        'syn_self':     '#A277FF', 'syn_deco':     '#FF79C6',
+        'syn_const':    '#A277FF', 'syn_magic':    '#FFD580',
+        'syn_unused':   '#3A2A4A',
     },
 }
 
@@ -110,44 +122,75 @@ class _PythonHighlighter(QSyntaxHighlighter):
         self._build_rules(theme or _THEMES['Dark'])
 
     def _build_rules(self, t: dict):
+        # Rules stored as (QRegularExpression, QTextCharFormat, capture_group)
+        # group=0 → full match, group=1 → first capture group
         self._rules = []
 
-        kw = QTextCharFormat()
-        kw.setForeground(QColor(t['syn_keyword']))
-        kw.setFontWeight(QFont.Bold)
-        for w in self._KEYWORDS:
-            self._rules.append((QRegularExpression(r'\b' + w + r'\b'), kw))
+        def fmt(color, bold=False, italic=False):
+            f = QTextCharFormat()
+            f.setForeground(QColor(color))
+            if bold:   f.setFontWeight(QFont.Bold)
+            if italic: f.setFontItalic(True)
+            return f
 
-        bi = QTextCharFormat()
-        bi.setForeground(QColor(t['syn_builtin']))
-        for w in self._BUILTINS:
-            self._rules.append((QRegularExpression(r'\b' + w + r'\b'), bi))
+        R = QRegularExpression
 
-        s = QTextCharFormat()
-        s.setForeground(QColor(t['syn_string']))
+        # Strings (before keywords so f"..." isn't partially re-coloured)
+        sf = fmt(t['syn_string'])
         self._rules += [
-            (QRegularExpression(r'"[^"\\]*(\\.[^"\\]*)*"'), s),
-            (QRegularExpression(r"'[^'\\]*(\\.[^'\\]*)*'"), s),
+            (R(r'(f|b|r|rb|br)?"[^"\\]*(\\.[^"\\]*)*"'), sf, 0),
+            (R(r"(f|b|r|rb|br)?'[^'\\]*(\\.[^'\\]*)*'"), sf, 0),
         ]
 
-        n = QTextCharFormat()
-        n.setForeground(QColor(t['syn_number']))
-        self._rules.append((QRegularExpression(r'\b\d+\.?\d*\b'), n))
+        # Keywords
+        kf = fmt(t['syn_keyword'], bold=True)
+        for w in self._KEYWORDS:
+            self._rules.append((R(r'\b' + w + r'\b'), kf, 0))
 
-        c = QTextCharFormat()
-        c.setForeground(QColor(t['syn_comment']))
-        self._rules.append((QRegularExpression(r'#[^\n]*'), c))
+        # Decorators (before builtins)
+        self._rules.append((R(r'@[\w.]+'), fmt(t['syn_deco']), 0))
+
+        # __dunder__ names
+        self._rules.append((R(r'\b__\w+__\b'), fmt(t['syn_magic']), 0))
+
+        # self / cls
+        self._rules.append((R(r'\b(self|cls)\b'), fmt(t['syn_self']), 0))
+
+        # def <name>  →  colour only the name (group 1)
+        self._rules.append((R(r'\bdef\s+(\w+)'), fmt(t['syn_def_name']), 1))
+
+        # class <name>  →  colour only the name (group 1)
+        self._rules.append((R(r'\bclass\s+(\w+)'), fmt(t['syn_cls_name'], bold=True), 1))
+
+        # ALL_CAPS constants (≥3 chars to avoid false positives like 'I')
+        self._rules.append((R(r'\b[A-Z][A-Z0-9_]{2,}\b'), fmt(t['syn_const']), 0))
+
+        # Builtins
+        bf = fmt(t['syn_builtin'])
+        for w in self._BUILTINS:
+            self._rules.append((R(r'\b' + w + r'\b'), bf, 0))
+
+        # Floats (before ints to avoid matching the integer part)
+        self._rules.append((R(r'\b\d+\.\d*([eE][+-]?\d+)?\b|\b\d*\.\d+([eE][+-]?\d+)?\b'), fmt(t['syn_number']), 0))
+        # Ints (hex, bin, oct, decimal)
+        self._rules.append((R(r'\b(0x[0-9a-fA-F]+|0b[01]+|0o[0-7]+|\d+)\b'), fmt(t['syn_number']), 0))
+
+        # Comments last (override everything on the line)
+        self._rules.append((R(r'#[^\n]*'), fmt(t['syn_comment'], italic=True), 0))
 
     def update_theme(self, t: dict):
         self._build_rules(t)
         self.rehighlight()
 
     def highlightBlock(self, text):
-        for pattern, fmt in self._rules:
+        for pattern, fmt, group in self._rules:
             it = pattern.globalMatch(text)
             while it.hasNext():
-                m = it.next()
-                self.setFormat(m.capturedStart(), m.capturedLength(), fmt)
+                m   = it.next()
+                s   = m.capturedStart(group)
+                ln  = m.capturedLength(group)
+                if s >= 0 and ln > 0:
+                    self.setFormat(s, ln, fmt)
 
 
 # ── Completion popup ─────────────────────────────────────────────────────────
@@ -240,6 +283,29 @@ class _CompletionPopup(QListWidget):
         self.inserted.emit()
 
 
+# ── Jedi worker (background thread) ─────────────────────────────────────────
+
+class _JediWorker(QThread):
+    done = Signal(list)
+
+    def __init__(self):
+        super().__init__()
+        self._code = ''
+        self._line = 1
+        self._col  = 0
+
+    def request(self, code: str, line: int, col: int):
+        self._code, self._line, self._col = code, line, col
+
+    def run(self):
+        try:
+            import jedi
+            completions = jedi.Script(self._code).complete(self._line, self._col)
+            self.done.emit(list(completions))
+        except Exception:
+            self.done.emit([])
+
+
 # ── Line number area ──────────────────────────────────────────────────────────
 
 class _LineArea(QWidget):
@@ -279,12 +345,33 @@ class _CodeEditor(QPlainTextEdit):
 
         self._popup = _CompletionPopup(self)
 
+        # Debounced completion (150ms for typing, 40ms for '.')
+        self._complete_timer = QTimer(self)
+        self._complete_timer.setSingleShot(True)
+        self._complete_timer.timeout.connect(self._do_complete)
+
+        # Async Jedi worker
+        self._jedi_worker = _JediWorker()
+        self._jedi_worker.done.connect(self._on_jedi_done)
+
+        # Extra selections: find highlights + unused variables (merged on apply)
+        self._search_sels: list = []
+        self._unused_sels: list = []
+
+        # Unused variable analysis (1.5s after last edit)
+        self._unused_timer = QTimer(self)
+        self._unused_timer.setSingleShot(True)
+        self._unused_timer.setInterval(1500)
+        self._unused_timer.timeout.connect(self._analyze_unused)
+        self.document().contentsChanged.connect(self._unused_timer.start)
+
     def set_theme(self, t: dict):
         self._theme = t
         self._apply_editor_style()
         self._highlighter.update_theme(t)
         self._line_area.update()
         self._popup.set_theme(t)
+        self._analyze_unused()  # recolor with new unused tint
 
     def _apply_editor_style(self):
         t = self._theme
@@ -436,33 +523,95 @@ class _CodeEditor(QPlainTextEdit):
                     self.type = 'instance'
         return [_Attr(a, prefix, obj) for a in attrs]
 
-    def _request_completions(self):
+    def _request_completions(self, delay: int = 150):
+        """Restart the debounce timer; _do_complete fires after `delay` ms."""
+        self._complete_timer.start(delay)
+
+    def _do_complete(self):
+        """Called by the debounce timer. Runs fast sync fallbacks immediately,
+        kicks off async Jedi in parallel."""
+        # Fast sync fallbacks first
+        completions = self._runtime_completions()
+        if not completions:
+            completions = self._doc_word_completions(self._current_prefix())
+
+        if completions:
+            self._popup.populate(completions)
+            self._popup.show_below_cursor()
+
+        # Start async Jedi (will update popup when done if it returns more)
         code   = self.toPlainText()
         cursor = self.textCursor()
         line   = cursor.blockNumber() + 1
         col    = cursor.positionInBlock()
-        completions = []
+        if not self._jedi_worker.isRunning():
+            self._jedi_worker.request(code, line, col)
+            self._jedi_worker.start()
 
-        # 1 — Jedi (works well for pure-Python, weak on C extensions)
-        try:
-            import jedi
-            completions = jedi.Script(code).complete(line, col)
-        except Exception:
-            pass
-
-        # 2 — Runtime dir() on actual objects (handles PyFx C extension types)
+    def _on_jedi_done(self, completions: list):
+        """Slot: called when async Jedi finishes. Update popup if still relevant."""
         if not completions:
-            completions = self._runtime_completions()
-
-        # 3 — Words from document (variable names, function names defined above)
-        if not completions:
-            completions = self._doc_word_completions(self._current_prefix())
-
-        if not completions:
-            self._popup.hide()
             return
-        self._popup.populate(completions)
-        self._popup.show_below_cursor()
+        # Only replace if prefix still matches (user didn't move on)
+        if self._current_prefix() or '.' in (self.textCursor().block().text()
+                                              [:self.textCursor().positionInBlock()]):
+            self._popup.populate(completions)
+            self._popup.show_below_cursor()
+
+    def _apply_extra_sels(self):
+        """Merge find highlights + unused variable dim, apply to editor."""
+        self.setExtraSelections(self._search_sels + self._unused_sels)
+
+    def _analyze_unused(self):
+        """Find Store-only names (never Loaded) and dim them via ExtraSelections."""
+        import ast
+        code = self.toPlainText()
+        self._unused_sels = []
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            self._apply_extra_sels()
+            return
+
+        stored: dict[str, list[ast.AST]] = {}
+        loaded: set[str] = set()
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name):
+                if isinstance(node.ctx, ast.Store):
+                    stored.setdefault(node.id, []).append(node)
+                elif isinstance(node.ctx, ast.Load):
+                    loaded.add(node.id)
+
+        unused_names = {n for n in stored if n not in loaded and not n.startswith('_')}
+        if not unused_names:
+            self._apply_extra_sels()
+            return
+
+        color = QColor(self._theme.get('syn_unused', '#4A4A66'))
+        fmt = QTextCharFormat()
+        fmt.setForeground(color)
+
+        doc = self.document()
+        for name, nodes in stored.items():
+            if name not in unused_names:
+                continue
+            for node in nodes:
+                # ast line numbers are 1-based
+                block = doc.findBlockByLineNumber(node.lineno - 1)
+                if not block.isValid():
+                    continue
+                start = block.position() + node.col_offset
+                length = len(name)
+                cursor = self.textCursor()
+                cursor.setPosition(start)
+                cursor.setPosition(start + length, cursor.KeepAnchor)
+                sel = QTextEdit.ExtraSelection()
+                sel.cursor = cursor
+                sel.format = fmt
+                self._unused_sels.append(sel)
+
+        self._apply_extra_sels()
 
     def focusOutEvent(self, event):
         self._popup.hide()
@@ -493,23 +642,21 @@ class _CodeEditor(QPlainTextEdit):
             self._toggle_comment()
             event.accept()
         elif ctrl and key == Qt.Key_Space:
-            self._request_completions()
+            self._do_complete()
             event.accept()
         else:
             super().keyPressEvent(event)
             ch = event.text()
             if ch == '.':
-                # Attribute completion
-                self._request_completions()
+                self._request_completions(delay=40)
             elif ch and (ch.isalnum() or ch == '_'):
-                # Doc-word / Jedi completion once prefix is long enough
                 if len(self._current_prefix()) >= 2:
-                    self._request_completions()
+                    self._request_completions(delay=150)
                 else:
                     self._popup.hide()
             elif key in (Qt.Key_Backspace, Qt.Key_Delete):
                 if self._popup.isVisible():
-                    self._request_completions()
+                    self._request_completions(delay=100)
             elif ch and ch not in ('.', '_') and not ch.isalnum():
                 self._popup.hide()
 
@@ -702,7 +849,8 @@ class _FindBar(QWidget):
             sel.format.setBackground(bg_cur if i == self._current else bg_all)
             sel.cursor = c
             sels.append(sel)
-        self._editor.setExtraSelections(sels)
+        self._editor._search_sels = sels
+        self._editor._apply_extra_sels()
 
     def _goto(self, idx):
         if not self._matches:
@@ -749,7 +897,8 @@ class _FindBar(QWidget):
         self._clear_highlights()
 
     def _clear_highlights(self):
-        self._editor.setExtraSelections([])
+        self._editor._search_sels = []
+        self._editor._apply_extra_sels()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
