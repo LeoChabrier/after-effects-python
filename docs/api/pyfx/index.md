@@ -51,6 +51,14 @@ print(layer_suite.GetLayerName(layer))
 | `PyFx.RegisterSuite` | Hook registration |
 | `PyFx.UtilitySuite` | Undo groups, logging, error handling |
 
+## Further reading
+
+The official Adobe AEGP SDK documentation covers every suite and function in detail:
+
+- [After Effects Plug-in SDK Guide](https://ae-plugins.docsforadobe.dev/) — suite reference, data types, error codes, and the full AEGP API
+
+`PyFx` wraps these suites 1-to-1. When a method's behavior isn't clear from this documentation, the Adobe reference is the authoritative source.
+
 ## Utility functions
 
 ```python

@@ -70,6 +70,10 @@ n     = layer_suite.GetCompNumLayers(comp)
 
 All suite handles are live — they call directly into the AE SDK in the current AE session.
 
+## References
+
+- [After Effects Plug-in SDK Guide](https://ae-plugins.docsforadobe.dev/) — official Adobe documentation for the AEGP C API that both AETK and PyFx wrap
+
 ## AETK vs PyFx
 
 | | AETK | PyFx |
