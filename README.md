@@ -72,13 +72,9 @@ Build **Release|x64**. This will:
 
 ## Usage
 
-Set `AE_SCRIPT_PATH` to a folder containing `.py` scripts:
+Open the script editor from **Window > Python Script Editor** in After Effects.
 
-```
-setx AE_SCRIPT_PATH C:\Users\you\ae-scripts
-```
-
-Each `.py` file in that folder appears as a menu command under **Window** in After Effects. Clicking it runs the script.
+Scripts are saved to `%APPDATA%\after-effects-python\scripts\` by default and are browsable from the outliner panel on the left.
 
 Inside a script, import `PyFx` to interact with the live AE session:
 
@@ -90,15 +86,18 @@ project = app.getProject()
 # ...
 ```
 
+Press **Ctrl+Enter** (or the ▶ Run button) to execute. stdout and stderr are captured to the log panel.
+
 ---
 
 ## Roadmap
 
 - [x] Python interpreter embedded in AE process
-- [x] Scripts loaded as AE menu commands
 - [x] PySide6 UI running inside AE (no separate window manager needed)
-- [ ] Script editor with syntax highlighting
-- [ ] Output panel (stdout/stderr capture)
+- [x] Script editor with syntax highlighting and line numbers
+- [x] Output panel (stdout/stderr capture with timestamps)
+- [x] Script file browser (outliner with new/rename/delete)
+- [ ] Wire up `Window > Python Script Editor` menu command in C++
 - [ ] PyFx auto-completion (.pyi stubs)
 - [ ] AE action logging (command hooks + project state polling)
 - [ ] `ae` high-level Python package on top of PyFx

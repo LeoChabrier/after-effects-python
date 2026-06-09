@@ -1,17 +1,19 @@
-﻿#include "PyShiftAE.h"
+#include "PyShiftAE.h"
 
 #include "AETK/AEGP/Core/PyFx.hpp"
 #include "Python.h"
 
 #include <pybind11/embed.h>
+#include <windows.h>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
 #include <queue>
-#include <sstream>
+#include <string>
 #include <thread>
 #include <chrono>
 #include <ctime>
+#include <atomic>
 
 namespace py = pybind11;
 namespace fs = std::filesystem;
@@ -25,10 +27,10 @@ static std::mutex log_mutex;
 static fs::path getLogPath() {
     const char* appdata = std::getenv("APPDATA");
     if (!appdata) return {};
-    fs::path dir = fs::path(appdata) / "PyShiftAE";
+    fs::path dir = fs::path(appdata) / "after-effects-python";
     if (!fs::exists(dir))
         fs::create_directories(dir);
-    return dir / "pyshiftae.log";
+    return dir / "plugin.log";
 }
 
 static void logMessage(const std::string& msg) {
@@ -45,13 +47,30 @@ static void logMessage(const std::string& msg) {
 }
 
 // ------------------------------------------------------------
+// Helpers
+// ------------------------------------------------------------
+
+static std::string getDllDirectory() {
+    HMODULE hModule = nullptr;
+    GetModuleHandleExA(
+        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        reinterpret_cast<LPCSTR>(&getDllDirectory),
+        &hModule
+    );
+    char path[MAX_PATH] = {};
+    GetModuleFileNameA(hModule, path, MAX_PATH);
+    return fs::path(path).parent_path().string();
+}
+
+// ------------------------------------------------------------
 // Globals
 // ------------------------------------------------------------
 
 AEGP_PluginID myID = 3927L;
 
-static std::queue<std::string> script_queue;
-static std::mutex script_mutex;
+// Code strings queued for execution in the Python thread
+static std::queue<std::string> code_queue;
+static std::mutex code_mutex;
 
 static std::atomic<bool> running = false;
 static std::thread py_thread;
@@ -59,38 +78,25 @@ static std::thread py_thread;
 PyShiftAE* PyShiftAE::instance = nullptr;
 
 // ------------------------------------------------------------
-// Script command
+// Script editor command
 // ------------------------------------------------------------
 
-PyShiftAEScriptCommand::PyShiftAEScriptCommand(
-    const std::string& label,
-    A_long command_id,
-    size_t script_index
-)
-    : Command(label.c_str(), MenuID::FILE, command_id),
-    script_index(script_index) {
+PyScriptEditorCommand::PyScriptEditorCommand(A_long command_id)
+    : Command("Python Script Editor", MenuID::WINDOW, command_id)
+{
 }
 
-void PyShiftAEScriptCommand::execute() {
+void PyScriptEditorCommand::execute() {
     if (!PyShiftAE::instance)
         return;
 
-    auto& plugin = *PyShiftAE::instance;
+    PyShiftAE::instance->ensurePythonStarted();
 
-    // ✅ Safe public call
-    plugin.ensurePythonStarted();
-
-    if (script_index >= plugin.scripts.size())
-        return;
-
-    logMessage("[execute] Queuing script index=" + std::to_string(script_index)
-               + " path=" + plugin.scripts[script_index].path);
-
-    std::lock_guard<std::mutex> lock(script_mutex);
-    script_queue.push(plugin.scripts[script_index].path);
+    std::lock_guard<std::mutex> lock(code_mutex);
+    code_queue.push("import PyAE.editor; PyAE.editor.main()");
 }
 
-void PyShiftAEScriptCommand::updateMenu() {
+void PyScriptEditorCommand::updateMenu() {
     SuiteManager::GetInstance()
         .GetSuiteHandler()
         .CommandSuite1()
@@ -110,145 +116,136 @@ PyShiftAE::PyShiftAE(
     instance = this;
 }
 
-std::vector<std::string> PyShiftAE::getScriptPaths() {
-	const char* script_path = std::getenv("AE_SCRIPT_PATH");
-
-    std::vector<std::string> result;
-
-    if (!script_path || !fs::exists(script_path))
-        return result;
-
-    for (const auto& entry : fs::directory_iterator(script_path)) {
-        if (entry.path().extension() == ".py") {
-            result.push_back(entry.path().string());
-        }
-    }
-
-    return result;
-}
-
-// ------------------------------------------------------------
-// Python lifecycle (SAFE + LAZY)
-// ------------------------------------------------------------
-
 void PyShiftAE::ensurePythonStarted() {
     if (python_started.exchange(true)) {
-        logMessage("[python] ensurePythonStarted: already running");
         return;
     }
-
-    logMessage("[python] ensurePythonStarted: first call, starting thread");
-    startPythonThread();
+    std::string pluginDir = getDllDirectory();
+    logMessage("[python] Plugin dir: " + pluginDir);
+    startPythonThread(pluginDir);
 }
 
-void PyShiftAE::startPythonThread() {
+// ------------------------------------------------------------
+// Python thread
+// ------------------------------------------------------------
+
+void PyShiftAE::startPythonThread(const std::string& pluginDir) {
     running.store(true);
 
-    py_thread = std::thread([]() {
-        bool python_initialized = false;
-
-        logMessage("[python] Calling Py_Initialize...");
+    py_thread = std::thread([pluginDir]() {
+        logMessage("[python] Py_Initialize...");
         Py_Initialize();
-        python_initialized = Py_IsInitialized();
-        logMessage(std::string("[python] Py_IsInitialized = ") + (python_initialized ? "true" : "false"));
+        bool ok = Py_IsInitialized();
+        logMessage(std::string("[python] Py_IsInitialized=") + (ok ? "true" : "false"));
 
-        if (python_initialized) {
-            try {
-                logMessage("[python] Importing PyFx...");
-                py::module::import("PyFx");
-                logMessage("[python] PyFx imported successfully");
+        if (!ok) return;
+
+        // --- Add package search paths to sys.path ---
+        // Primary: %APPDATA%\after-effects-python  (post-build copies PyAE here, no admin needed)
+        // Fallback: DLL directory (useful when running from a dev layout)
+        {
+            std::vector<std::string> paths;
+
+            const char* appdata = std::getenv("APPDATA");
+            if (appdata) {
+                paths.push_back((fs::path(appdata) / "after-effects-python").string());
             }
-            catch (const std::exception& e) {
-                logMessage(std::string("[python] PyFx import failed: ") + e.what());
-                App::Alert("PyFx import failed");
+            if (!pluginDir.empty()) {
+                paths.push_back(pluginDir);
             }
-            catch (...) {
-                logMessage("[python] PyFx import failed (unknown exception)");
-                App::Alert("PyFx import failed");
+
+            for (const auto& p : paths) {
+                try {
+                    std::string escaped;
+                    for (char c : p)
+                        escaped += (c == '\\') ? "\\\\" : std::string(1, c);
+                    py::exec("import sys\nif '" + escaped + "' not in sys.path:\n    sys.path.insert(0, '" + escaped + "')");
+                    logMessage("[python] sys.path: " + p);
+                }
+                catch (const std::exception& e) {
+                    logMessage(std::string("[python] sys.path error for ") + p + ": " + e.what());
+                }
             }
         }
 
-        // Set up Qt integration: monkey-patch exec/exec_ so scripts
-        // don't block.  Do NOT create a QApplication ourselves — the
-        // scripts use FXApplication (a QApplication subclass with its
-        // own singleton pattern).  The first script creates it; the
-        // singleton ensures subsequent scripts reuse it.
-        // processEvents() in the loop keeps every window responsive.
+        // --- Import PyFx ---
         try {
-            logMessage("[python] Setting up Qt integration...");
+            py::module::import("PyFx");
+            logMessage("[python] PyFx imported");
+        }
+        catch (const std::exception& e) {
+            logMessage(std::string("[python] PyFx import failed: ") + e.what());
+            App::Alert("PyFx import failed");
+        }
+
+        // --- Qt integration: patch exec() so it doesn't block ---
+        try {
             py::exec(R"(
-__pyshiftae_qt_mod = None
+__pyae_qt_mod = None
 for _mn in ('PySide6.QtWidgets', 'PySide2.QtWidgets',
             'PyQt6.QtWidgets', 'PyQt5.QtWidgets'):
     try:
-        __pyshiftae_qt_mod = __import__(_mn, fromlist=['QApplication'])
+        __pyae_qt_mod = __import__(_mn, fromlist=['QApplication'])
         break
     except ImportError:
         continue
 
-if __pyshiftae_qt_mod is not None:
-    _QApp = __pyshiftae_qt_mod.QApplication
+if __pyae_qt_mod is not None:
+    _QApp = __pyae_qt_mod.QApplication
     _QApp.exec = lambda *a, **kw: 0
     if hasattr(_QApp, 'exec_'):
         _QApp.exec_ = lambda *a, **kw: 0
 
-def __pyshiftae_process_qt():
-    if __pyshiftae_qt_mod is None:
+def __pyae_process_qt():
+    if __pyae_qt_mod is None:
         return
-    _inst = __pyshiftae_qt_mod.QApplication.instance()
+    _inst = __pyae_qt_mod.QApplication.instance()
     if _inst is not None:
         _inst.processEvents()
 )");
             logMessage("[python] Qt integration ready");
         }
         catch (const std::exception& e) {
-            logMessage(std::string("[python] Qt setup note: ") + e.what());
+            logMessage(std::string("[python] Qt setup: ") + e.what());
         }
 
+        // --- Event loop ---
         {
-            // Scope block so py::object refs are destroyed before Py_Finalize
             py::object process_qt;
             try {
-                process_qt = py::globals()["__pyshiftae_process_qt"];
+                process_qt = py::globals()["__pyae_process_qt"];
             }
             catch (...) {
                 process_qt = py::none();
             }
 
             while (running.load()) {
-                std::string path;
-
+                std::string code;
                 {
-                    std::lock_guard<std::mutex> lock(script_mutex);
-                    if (!script_queue.empty()) {
-                        path = script_queue.front();
-                        script_queue.pop();
+                    std::lock_guard<std::mutex> lock(code_mutex);
+                    if (!code_queue.empty()) {
+                        code = code_queue.front();
+                        code_queue.pop();
                     }
                 }
 
-                if (!path.empty()) {
-                    logMessage("[python] Dequeued script: " + path);
+                if (!code.empty()) {
+                    logMessage("[python] exec: " + code);
                     try {
-                        logMessage("[python] Executing script: " + path);
-                        py::eval_file(path.c_str());
-                        logMessage("[python] Script finished: " + path);
+                        py::exec(code.c_str());
                     }
                     catch (py::error_already_set& e) {
-                        if (e.matches(PyExc_SystemExit)) {
-                            logMessage("[python] Script exited via sys.exit (normal for Qt): " + path);
-                        }
-                        else {
-                            logMessage(std::string("[python] Script error: ") + e.what());
+                        if (!e.matches(PyExc_SystemExit)) {
+                            logMessage(std::string("[python] error: ") + e.what());
                             App::Alert(e.what());
                         }
                     }
                     catch (const std::exception& e) {
-                        logMessage(std::string("[python] Script error: ") + e.what());
+                        logMessage(std::string("[python] error: ") + e.what());
                         App::Alert(e.what());
                     }
                 }
 
-                // Process Qt events to keep all open windows responsive
                 if (!process_qt.is_none()) {
                     try { process_qt(); }
                     catch (...) {}
@@ -256,16 +253,12 @@ def __pyshiftae_process_qt():
 
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
-        } // py::object refs released here
-
-        logMessage("[python] Worker loop exited");
-
-        if (python_initialized) {
-            logMessage("[python] Calling Py_Finalize...");
-            Py_Finalize();
-            logMessage("[python] Py_Finalize done");
         }
-        });
+
+        logMessage("[python] Thread exiting, Py_Finalize...");
+        Py_Finalize();
+        logMessage("[python] Py_Finalize done");
+    });
 }
 
 // ------------------------------------------------------------
@@ -273,51 +266,23 @@ def __pyshiftae_process_qt():
 // ------------------------------------------------------------
 
 void PyShiftAE::onInit() {
-    logMessage("[init] onInit called");
-    auto paths = getScriptPaths();
-
-    logMessage("[init] Found " + std::to_string(paths.size()) + " script(s)");
-    for (const auto& p : paths)
-        logMessage("[init]   " + p);
-
-    // No scripts = plugin does nothing
-    if (paths.empty())
-        return;
-
-    A_long base_id = 40000;
-
-    for (size_t i = 0; i < paths.size(); ++i) {
-        ScriptEntry entry;
-        entry.command_id = base_id + static_cast<A_long>(i);
-        entry.path = paths[i];
-        entry.name = fs::path(paths[i]).stem().string();
-
-        scripts.push_back(entry);
-
-        addCommand(std::make_unique<PyShiftAEScriptCommand>(
-            entry.name,
-            entry.command_id,
-            i
-        ));
-    }
-
+    logMessage("[init] onInit");
+    addCommand(std::make_unique<PyScriptEditorCommand>(40000));
     registerCommandHook();
     registerUpdateMenuHook();
     registerIdleHook();
 }
 
 void PyShiftAE::onDeath() {
-    logMessage("[death] onDeath called");
+    logMessage("[death] onDeath");
     if (!python_started.load())
         return;
 
     running.store(false);
-    logMessage("[death] Waiting for python thread to join...");
-
-    if (py_thread.joinable()) {
+    if (py_thread.joinable())
         py_thread.join();
-    }
-    logMessage("[death] Python thread joined");
+
+    logMessage("[death] Thread joined");
 }
 
 void PyShiftAE::onIdle() {

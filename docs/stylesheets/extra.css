@@ -1,0 +1,35 @@
+:root {
+  --ae-purple: #9999FF;
+  --ae-purple-dark: #7777dd;
+}
+
+/* Accent color override — AE purple */
+[data-md-color-accent="deep-purple"] {
+  --md-accent-fg-color: var(--ae-purple);
+  --md-accent-fg-color--transparent: rgba(153, 153, 255, 0.1);
+}
+
+/* Inline code */
+.md-typeset code {
+  border-radius: 3px;
+}
+
+/* Admonition — note type uses AE purple */
+.md-typeset .admonition.note,
+.md-typeset details.note {
+  border-color: var(--ae-purple);
+}
+.md-typeset .note > .admonition-title,
+.md-typeset .note > summary {
+  background-color: rgba(153, 153, 255, 0.1);
+}
+.md-typeset .note > .admonition-title::before,
+.md-typeset .note > summary::before {
+  background-color: var(--ae-purple);
+}
+
+/* Dark mode adjustments */
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color: #1a1a2e;
+  --md-code-bg-color: #16213e;
+}

@@ -1,0 +1,118 @@
+site_name: after-effects-python
+site_url: https://leochabrier.github.io/after-effects-python/
+site_author: Leo Chabrier
+site_description: Python scripting inside Adobe After Effects — AEGP plugin with SDK bindings and a live Script Editor.
+
+repo_name: LeoChabrier/after-effects-python
+repo_url: https://github.com/LeoChabrier/after-effects-python
+edit_uri: edit/main/docs/
+
+copyright: Leo Chabrier | Licensed under the MIT License
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.breadcrumbs
+    - navigation.instant
+    - navigation.instant.prefetch
+    - search.suggest
+    - search.highlight
+    - content.code.annotate
+    - content.code.copy
+    - content.tooltips
+    - content.tabs.link
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: deep purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: deep purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+  extra_css:
+    - stylesheets/extra.css
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [python]
+          options:
+            docstring_style: google
+            show_source: true
+            show_signature_annotations: true
+            show_root_heading: true
+            heading_level: 2
+            merge_init_into_class: true
+            group_by_category: true
+  - git-revision-date-localized:
+      enable_creation_date: true
+      type: timeago
+
+hooks:
+  - docs/_scripts/mock_modules.py
+  - docs/_scripts/generate_changelog.py
+
+markdown_extensions:
+  - admonition
+  - def_list
+  - footnotes
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - attr_list
+  - md_in_html
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Architecture: architecture.md
+  - Guide:
+      - guide/index.md
+      - Script Editor: guide/script-editor.md
+  - API Reference:
+      - api/index.md
+      - PyFx:
+          - Overview: api/pyfx/index.md
+          - Project & Items: api/pyfx/project.md
+          - Compositions: api/pyfx/compositions.md
+          - Layers: api/pyfx/layers.md
+          - Properties & Keyframes: api/pyfx/properties.md
+          - Effects & Masks: api/pyfx/effects.md
+          - Render: api/pyfx/render.md
+          - Utilities: api/pyfx/utilities.md
+      - Script Editor: api/editor.md
+  - Changelog: changelog.md

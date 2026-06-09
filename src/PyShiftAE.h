@@ -1,39 +1,21 @@
 #pragma once
 
 #include <AETK/AEGP/AEGP.hpp>
-#include <vector>
-#include <string>
 #include <atomic>
 #include <thread>
 #include <memory>
-
-/**
- * One Python script mapped to one AE command
- */
-struct ScriptEntry {
-    A_long command_id;
-    std::string name;
-    std::string path;
-};
+#include <string>
 
 class PyShiftAE;
 
 /**
- * Command executing a Python script
+ * Single command: opens the Python Script Editor window (Window menu)
  */
-class PyShiftAEScriptCommand : public Command {
+class PyScriptEditorCommand : public Command {
 public:
-    PyShiftAEScriptCommand(
-        const std::string& label,
-        A_long command_id,
-        size_t script_index
-    );
-
+    explicit PyScriptEditorCommand(A_long command_id);
     void execute() override;
     void updateMenu() override;
-
-private:
-    size_t script_index;
 };
 
 /**
@@ -49,19 +31,14 @@ public:
 
     static PyShiftAE* instance;
 
-    void onInit() override;
+    void onInit()  override;
     void onDeath() override;
-    void onIdle() override;
+    void onIdle()  override;
 
-    static std::vector<std::string> getScriptPaths();
-
-    // ?? PUBLIC SAFE ENTRY POINT
     void ensurePythonStarted();
 
-    std::vector<ScriptEntry> scripts;
-
 private:
-    void startPythonThread();
+    void startPythonThread(const std::string& pluginDir);
 
     std::atomic<bool> python_started{ false };
 };

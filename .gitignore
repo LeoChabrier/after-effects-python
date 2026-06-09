@@ -2,6 +2,7 @@ bin/
 obj/
 AETK/x64/
 .vs/
+.vscode/
 *.user
 *.suo
 *.aps
@@ -15,3 +16,4 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+site/
