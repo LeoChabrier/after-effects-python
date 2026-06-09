@@ -9,14 +9,14 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QSplitter, QTreeWidget, QTreeWidgetItem,
     QPlainTextEdit, QToolBar, QFileDialog, QMessageBox,
     QApplication, QMenu, QInputDialog, QHBoxLayout, QVBoxLayout,
-    QPushButton, QLabel, QStatusBar, QComboBox,
+    QPushButton, QLabel, QStatusBar, QComboBox, QListWidget, QListWidgetItem,
 )
 from PySide6.QtGui import (
     QSyntaxHighlighter, QTextCharFormat, QColor, QFont,
     QKeySequence, QAction, QPainter, QTextCursor,
     QShortcut, QIcon, QPixmap,
 )
-from PySide6.QtCore import Qt, QRegularExpression, QSize, QRect, QRectF
+from PySide6.QtCore import Qt, QRegularExpression, QSize, QRect, QRectF, Signal
 
 SCRIPTS_DIR = Path(os.environ.get('APPDATA', Path.home())) / 'after-effects-python' / 'scripts'
 
@@ -149,6 +149,80 @@ class _PythonHighlighter(QSyntaxHighlighter):
                 self.setFormat(m.capturedStart(), m.capturedLength(), fmt)
 
 
+# ── Completion popup ─────────────────────────────────────────────────────────
+
+class _CompletionPopup(QListWidget):
+    inserted = Signal()
+
+    # Icons shown next to completion type
+    _TYPE_ICON = {
+        'function':  'ƒ',
+        'instance':  '○',
+        'class':     'C',
+        'module':    'M',
+        'keyword':   'k',
+        'statement': '=',
+        'param':     'p',
+    }
+
+    def __init__(self, editor):
+        super().__init__(None)
+        self._editor = editor
+        self.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setFont(QFont('Consolas', 10))
+        self.setFixedWidth(300)
+        self.setMaximumHeight(200)
+        self.itemClicked.connect(self._on_click)
+        self.set_theme(_THEMES['Dark'])
+
+    def set_theme(self, t: dict):
+        self.setStyleSheet(
+            f"QListWidget {{ background:{t['panel_bg']}; color:{t['editor_fg']}; "
+            f"border:1px solid {t['splitter']}; outline:none; }}"
+            f"QListWidget::item {{ padding:2px 6px; }}"
+            f"QListWidget::item:selected {{ background:{t['statusbar']}; color:#fff; }}"
+        )
+
+    def populate(self, completions: list):
+        self.clear()
+        for c in completions[:30]:
+            icon  = self._TYPE_ICON.get(c.type, '·')
+            label = f"{icon}  {c.name}"
+            item  = QListWidgetItem(label)
+            item.setData(Qt.UserRole, c.complete)
+            self.addItem(item)
+        if self.count():
+            self.setCurrentRow(0)
+            row_h = self.sizeHintForRow(0) + 2
+            self.setFixedHeight(min(row_h * self.count() + 6, 200))
+
+    def show_below_cursor(self):
+        rect = self._editor.cursorRect()
+        pos  = self._editor.viewport().mapToGlobal(rect.bottomLeft())
+        self.move(pos)
+        self.show()
+
+    def move_selection(self, delta: int):
+        row = max(0, min(self.currentRow() + delta, self.count() - 1))
+        self.setCurrentRow(row)
+
+    def accept_current(self):
+        item = self.currentItem()
+        if item:
+            self._editor.insertPlainText(item.data(Qt.UserRole))
+        self.hide()
+        self._editor.setFocus()
+        self.inserted.emit()
+
+    def _on_click(self, item):
+        self._editor.insertPlainText(item.data(Qt.UserRole))
+        self.hide()
+        self._editor.setFocus()
+        self.inserted.emit()
+
+
 # ── Line number area ──────────────────────────────────────────────────────────
 
 class _LineArea(QWidget):
@@ -186,11 +260,14 @@ class _CodeEditor(QPlainTextEdit):
             sc.setContext(Qt.WidgetShortcut)
             sc.activated.connect(self._toggle_comment)
 
+        self._popup = _CompletionPopup(self)
+
     def set_theme(self, t: dict):
         self._theme = t
         self._apply_editor_style()
         self._highlighter.update_theme(t)
         self._line_area.update()
+        self._popup.set_theme(t)
 
     def _apply_editor_style(self):
         t = self._theme
@@ -287,16 +364,64 @@ class _CodeEditor(QPlainTextEdit):
 
         cursor.endEditBlock()
 
+    def _request_completions(self):
+        try:
+            import jedi
+        except ImportError:
+            return
+        code   = self.toPlainText()
+        cursor = self.textCursor()
+        line   = cursor.blockNumber() + 1
+        col    = cursor.positionInBlock()
+        try:
+            completions = jedi.Script(code).complete(line, col)
+        except Exception:
+            self._popup.hide()
+            return
+        if not completions:
+            self._popup.hide()
+            return
+        self._popup.populate(completions)
+        self._popup.show_below_cursor()
+
     def keyPressEvent(self, event):
         ctrl = bool(event.modifiers() & Qt.ControlModifier)
-        if event.key() == Qt.Key_Tab:
+        key  = event.key()
+
+        # Popup navigation intercept
+        if self._popup.isVisible():
+            if key == Qt.Key_Down:
+                self._popup.move_selection(1);  event.accept(); return
+            if key == Qt.Key_Up:
+                self._popup.move_selection(-1); event.accept(); return
+            if key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Tab):
+                self._popup.accept_current();   event.accept(); return
+            if key == Qt.Key_Escape:
+                self._popup.hide();             event.accept(); return
+            if key in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Home, Qt.Key_End):
+                self._popup.hide()
+
+        # Normal edit
+        if key == Qt.Key_Tab:
             self.insertPlainText('    ')
-        elif ctrl and event.key() in (Qt.Key_Slash, Qt.Key_Colon):
-            # Key_Slash = QWERTY Ctrl+/   Key_Colon = AZERTY Ctrl+: (same physical key as /)
+            event.accept()
+        elif ctrl and key in (Qt.Key_Slash, Qt.Key_Colon):
             self._toggle_comment()
+            event.accept()
+        elif ctrl and key == Qt.Key_Space:
+            self._request_completions()
             event.accept()
         else:
             super().keyPressEvent(event)
+            # Auto-trigger on '.' or keep popup live while typing
+            if event.text() == '.':
+                self._request_completions()
+            elif self._popup.isVisible():
+                ch = event.text()
+                if ch and (ch.isalnum() or ch == '_'):
+                    self._request_completions()
+                elif key in (Qt.Key_Backspace, Qt.Key_Delete):
+                    self._request_completions()
 
 
 # ── Log panel ─────────────────────────────────────────────────────────────────
