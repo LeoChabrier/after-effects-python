@@ -1,5 +1,9 @@
 # after-effects-python
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11+-yellow.svg)](https://www.python.org/)
+[![After Effects](https://img.shields.io/badge/RenderMan-25+-red.svg)]([https://renderman.pixar.com/](https://upload.wikimedia.org/wikipedia/commons/thumb/c/cb/Adobe_After_Effects_CC_icon.svg/langfr-1920px-Adobe_After_Effects_CC_icon.svg.png))
+
 Python scripting inside Adobe After Effects — a live AEGP plugin with SDK bindings and a PySide6 script editor.
 
 > **Status:** Early development. The plugin loads and runs Python scripts inside AE. The script editor UI is in progress. Contributions welcome.
