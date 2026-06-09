@@ -1,0 +1,17 @@
+bin/
+obj/
+AETK/x64/
+.vs/
+*.user
+*.suo
+*.aps
+*.ncb
+*.sdf
+*.opensdf
+ipch/
+__pycache__/
+*.pyc
+*.pyd
+*.egg-info/
+dist/
+build/
