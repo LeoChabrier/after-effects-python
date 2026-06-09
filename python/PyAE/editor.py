@@ -180,10 +180,11 @@ class _CodeEditor(QPlainTextEdit):
         self.updateRequest.connect(self._update_line_area)
         self._update_line_area_width(0)
 
-        # Ctrl+/ — QShortcut handles keyboard layout translation (works on AZERTY)
-        sc = QShortcut(QKeySequence('Ctrl+/'), self)
-        sc.setContext(Qt.WidgetShortcut)
-        sc.activated.connect(self._toggle_comment)
+        # Ctrl+/ (QWERTY) + Ctrl+: (AZERTY — same physical key, no Shift needed, mirrors VS Code)
+        for ks in ('Ctrl+/', 'Ctrl+:'):
+            sc = QShortcut(QKeySequence(ks), self)
+            sc.setContext(Qt.WidgetShortcut)
+            sc.activated.connect(self._toggle_comment)
 
     def set_theme(self, t: dict):
         self._theme = t
@@ -287,8 +288,13 @@ class _CodeEditor(QPlainTextEdit):
         cursor.endEditBlock()
 
     def keyPressEvent(self, event):
+        ctrl = bool(event.modifiers() & Qt.ControlModifier)
         if event.key() == Qt.Key_Tab:
             self.insertPlainText('    ')
+        elif ctrl and event.key() in (Qt.Key_Slash, Qt.Key_Colon):
+            # Key_Slash = QWERTY Ctrl+/   Key_Colon = AZERTY Ctrl+: (same physical key as /)
+            self._toggle_comment()
+            event.accept()
         else:
             super().keyPressEvent(event)
 
