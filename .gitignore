@@ -18,4 +18,12 @@ dist/
 build/
 site/
 AETK/*.py
-python/tests/
+
+# MSI / Advanced Installer build output
+*.msi
+*.msm
+*.cab
+installer/
+AiBackup/
+AiProject/
+SetupFiles/
