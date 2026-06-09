@@ -389,7 +389,6 @@ class _CodeEditor(QPlainTextEdit):
         return m.group() if m else ''
 
     def _doc_word_completions(self, prefix: str) -> list:
-        """Words already present in the document that start with prefix."""
         import re
         if len(prefix) < 2:
             return []
@@ -403,6 +402,39 @@ class _CodeEditor(QPlainTextEdit):
                 self.type     = '_doc'
         return [_W(w, prefix) for w in matches[:30]]
 
+    def _runtime_completions(self) -> list:
+        """dir()-based attribute completion using the actual runtime objects."""
+        import re, sys
+        text_before = self.textCursor().block().text()[:self.textCursor().positionInBlock()]
+        m = re.search(r'([\w.]+)\.(\w*)$', text_before)
+        if not m:
+            return []
+        obj_expr = m.group(1)
+        prefix   = m.group(2)
+
+        # Eval context: top-level sys.modules + last-run namespace
+        ctx = {k: v for k, v in sys.modules.items() if '.' not in k and v is not None}
+        ctx.update(getattr(self, '_namespace', {}))
+
+        try:
+            obj = eval(obj_expr, ctx)
+        except Exception:
+            return []
+
+        attrs = [a for a in dir(obj) if a.startswith(prefix) and not a.startswith('_')]
+        if not attrs:
+            return []
+
+        class _Attr:
+            def __init__(self, name, pfx, parent):
+                self.name     = name
+                self.complete = name[len(pfx):]
+                try:
+                    self.type = 'function' if callable(getattr(parent, name)) else 'instance'
+                except Exception:
+                    self.type = 'instance'
+        return [_Attr(a, prefix, obj) for a in attrs]
+
     def _request_completions(self):
         code   = self.toPlainText()
         cursor = self.textCursor()
@@ -410,14 +442,18 @@ class _CodeEditor(QPlainTextEdit):
         col    = cursor.positionInBlock()
         completions = []
 
-        # 1 — Jedi (type-aware, attribute completion after '.')
+        # 1 — Jedi (works well for pure-Python, weak on C extensions)
         try:
             import jedi
             completions = jedi.Script(code).complete(line, col)
         except Exception:
             pass
 
-        # 2 — fallback: words from document (variables, functions defined above)
+        # 2 — Runtime dir() on actual objects (handles PyFx C extension types)
+        if not completions:
+            completions = self._runtime_completions()
+
+        # 3 — Words from document (variable names, function names defined above)
         if not completions:
             completions = self._doc_word_completions(self._current_prefix())
 
@@ -896,6 +932,10 @@ class ScriptEditorWindow(QMainWindow):
             sys.stdout.flush()
             sys.stderr.flush()
             sys.stdout, sys.stderr = old_out, old_err
+
+        # Expose run namespace to editor for runtime completion (proj_suite. etc.)
+        self._editor._namespace = {k: v for k, v in namespace.items()
+                                    if k not in ('__name__', '__builtins__', '__doc__')}
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
