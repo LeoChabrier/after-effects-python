@@ -44,7 +44,12 @@ The plugin is a `.aex` file (Windows DLL) loaded by AE at startup. It bootstraps
 - Visual Studio 2022 (v143 toolset)
 - Python 3.11 x64 — installed at `C:\Program Files\Python311`
 - [vcpkg](https://github.com/microsoft/vcpkg) — installed at `C:\vcpkg`, with `VCPKG_ROOT=C:\vcpkg` environment variable set
-- ICU (via vcpkg): `vcpkg install icu:x64-windows-static`
+- Dependencies via vcpkg (use the `x64-windows-static-md` triplet — static libs with dynamic CRT, required for MSVC 17.3+ compatibility):
+
+```
+cd C:\vcpkg
+.\vcpkg.exe install icu:x64-windows-static-md pybind11:x64-windows-static-md stb:x64-windows-static-md
+```
 
 ---
 

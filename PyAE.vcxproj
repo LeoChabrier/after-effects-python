@@ -65,7 +65,7 @@
 
   <!-- Shared include paths -->
   <PropertyGroup>
-    <AETKIncludes>$(ProjectDir);$(ProjectDir)AETK;$(ProjectDir)AETK\AEGP;$(ProjectDir)Headers;$(ProjectDir)Headers\SP;$(ProjectDir)Headers\Win;$(ProjectDir)Headers\adobesdk;$(ProjectDir)Headers\adobesdk\drawbotsuite;$(ProjectDir)Headers\adobesdk\config;$(ProjectDir)Resources;$(ProjectDir)Util;$(VCPKG_ROOT)\installed\x64-windows-static\include;C:\Program Files\Python311\include</AETKIncludes>
+    <AETKIncludes>$(ProjectDir);$(ProjectDir)AETK;$(ProjectDir)AETK\AEGP;$(ProjectDir)Headers;$(ProjectDir)Headers\SP;$(ProjectDir)Headers\Win;$(ProjectDir)Headers\adobesdk;$(ProjectDir)Headers\adobesdk\drawbotsuite;$(ProjectDir)Headers\adobesdk\config;$(ProjectDir)Resources;$(ProjectDir)Util;$(VCPKG_ROOT)\installed\x64-windows-static-md\include;C:\Program Files\Python311\include</AETKIncludes>
   </PropertyGroup>
 
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -74,7 +74,7 @@
       <WarningLevel>Level3</WarningLevel>
       <AdditionalIncludeDirectories>$(AETKIncludes);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <AdditionalOptions>/bigobj /utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
@@ -82,9 +82,9 @@
       <TargetMachine>MachineX64</TargetMachine>
       <RandomizedBaseAddress>false</RandomizedBaseAddress>
       <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
-      <!-- Use release Python lib to avoid python311_d.dll dependency -->
-      <AdditionalLibraryDirectories>C:\Program Files\Python311\libs;$(VCPKG_ROOT)\installed\x64-windows-static\debug\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>python311.lib;icudtd.lib;icuiod.lib;icuind.lib;icuucd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <!-- Use release libs to avoid debug DLL and MSVC intrinsic incompatibilities -->
+      <AdditionalLibraryDirectories>C:\Program Files\Python311\libs;$(VCPKG_ROOT)\installed\x64-windows-static-md\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>python311.lib;icudt.lib;icuio.lib;icuin.lib;icuuc.lib;msvcprt.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
 
@@ -94,7 +94,7 @@
       <WarningLevel>Level3</WarningLevel>
       <AdditionalIncludeDirectories>$(AETKIncludes);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <AdditionalOptions>/bigobj /utf-8 %(AdditionalOptions)</AdditionalOptions>
       <Optimization>MaxSpeed</Optimization>
     </ClCompile>
@@ -103,8 +103,8 @@
       <TargetMachine>MachineX64</TargetMachine>
       <RandomizedBaseAddress>false</RandomizedBaseAddress>
       <ImportLibrary>$(IntDir)$(TargetName).lib</ImportLibrary>
-      <AdditionalLibraryDirectories>C:\Program Files\Python311\libs;$(VCPKG_ROOT)\installed\x64-windows-static\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>python311.lib;icudt.lib;icuio.lib;icuin.lib;icuuc.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>C:\Program Files\Python311\libs;$(VCPKG_ROOT)\installed\x64-windows-static-md\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>python311.lib;icudt.lib;icuio.lib;icuin.lib;icuuc.lib;msvcprt.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
 
@@ -130,6 +130,7 @@ cl /D "MSWindows" /EP "$(IntDir)%(Filename).rrc" &gt; "$(ProjectDir)src\%(Filena
 
   <ItemGroup>
     <ClCompile Include="src\PyShiftAE.cpp" />
+    <ClCompile Include="src\msvc_stl_compat.cpp" />
   </ItemGroup>
 
   <!-- Project reference: VS builds AETK first and links AETK.lib automatically -->
