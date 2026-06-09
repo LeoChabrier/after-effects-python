@@ -16,7 +16,7 @@ from PySide6.QtGui import (
     QKeySequence, QAction, QPainter, QTextCursor,
     QShortcut, QIcon, QPixmap,
 )
-from PySide6.QtCore import Qt, QRegularExpression, QSize, QRect, QRectF, Signal
+from PySide6.QtCore import Qt, QRegularExpression, QSize, QRect, QRectF, Signal, QPoint
 
 SCRIPTS_DIR = Path(os.environ.get('APPDATA', Path.home())) / 'after-effects-python' / 'scripts'
 
@@ -174,7 +174,7 @@ class _CompletionPopup(QListWidget):
     }
 
     def __init__(self, editor):
-        super().__init__(editor)           # child of _CodeEditor — no window manager involved
+        super().__init__(editor.viewport())  # child of viewport — renders ON TOP of text
         self._editor = editor
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setFocusPolicy(Qt.NoFocus)
@@ -209,14 +209,15 @@ class _CompletionPopup(QListWidget):
             self.setFixedHeight(min(row_h * self.count() + 6, 200))
 
     def show_below_cursor(self):
-        rect  = self._editor.cursorRect()
-        # cursorRect is in viewport coords — map to editor (parent) coords
-        pt    = self._editor.viewport().mapTo(self._editor, rect.bottomLeft())
-        pt.setY(pt.y() + 2)
-        # Flip above cursor if too close to bottom
-        if pt.y() + self.height() > self._editor.height() - 10:
-            pt.setY(self._editor.viewport().mapTo(self._editor, rect.topLeft()).y() - self.height() - 2)
-        self.move(pt)
+        # cursorRect() is already in viewport coordinates — use directly
+        rect = self._editor.cursorRect()
+        x    = rect.left()
+        y    = rect.bottom() + 2
+        # Flip above cursor if too close to bottom of viewport
+        vp_h = self._editor.viewport().height()
+        if y + self.height() > vp_h - 4:
+            y = rect.top() - self.height() - 2
+        self.move(QPoint(x, max(0, y)))
         self.raise_()
         self.show()
 
@@ -459,15 +460,21 @@ class _CodeEditor(QPlainTextEdit):
             event.accept()
         else:
             super().keyPressEvent(event)
-            # Auto-trigger on '.' or keep popup live while typing
-            if event.text() == '.':
+            ch = event.text()
+            if ch == '.':
+                # Attribute completion
                 self._request_completions()
-            elif self._popup.isVisible():
-                ch = event.text()
-                if ch and (ch.isalnum() or ch == '_'):
+            elif ch and (ch.isalnum() or ch == '_'):
+                # Doc-word / Jedi completion once prefix is long enough
+                if len(self._current_prefix()) >= 2:
                     self._request_completions()
-                elif key in (Qt.Key_Backspace, Qt.Key_Delete):
+                else:
+                    self._popup.hide()
+            elif key in (Qt.Key_Backspace, Qt.Key_Delete):
+                if self._popup.isVisible():
                     self._request_completions()
+            elif ch and ch not in ('.', '_') and not ch.isalnum():
+                self._popup.hide()
 
 
 # ── Log panel ─────────────────────────────────────────────────────────────────
