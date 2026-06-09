@@ -152,30 +152,39 @@ class _PythonHighlighter(QSyntaxHighlighter):
 # ── Completion popup ─────────────────────────────────────────────────────────
 
 class _CompletionPopup(QListWidget):
+    """Floating completion list — child widget of the editor (no separate window)."""
+
     inserted = Signal()
 
-    # Icons shown next to completion type
     _TYPE_ICON = {
-        'function':  'ƒ',
-        'instance':  '○',
-        'class':     'C',
-        'module':    'M',
-        'keyword':   'k',
-        'statement': '=',
-        'param':     'p',
+        'function': 'ƒ', 'class': 'C', 'module': 'M',
+        'keyword':  'k', 'instance': '○', 'statement': '=',
+        'param': 'p', '_doc': '·',
+    }
+    # Fixed colors that read well on dark/light alike
+    _TYPE_COLOR = {
+        'function':  '#DCDCAA',
+        'class':     '#4EC9B0',
+        'module':    '#4FC1FF',
+        'keyword':   '#C586C0',
+        'instance':  '#9CDCFE',
+        'statement': '#9CDCFE',
+        'param':     '#CE9178',
+        '_doc':      '#888888',
     }
 
     def __init__(self, editor):
-        super().__init__(None)
+        super().__init__(editor)           # child of _CodeEditor — no window manager involved
         self._editor = editor
-        self.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setFocusPolicy(Qt.NoFocus)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setFont(QFont('Consolas', 10))
         self.setFixedWidth(300)
         self.setMaximumHeight(200)
         self.itemClicked.connect(self._on_click)
         self.set_theme(_THEMES['Dark'])
+        self.hide()
 
     def set_theme(self, t: dict):
         self.setStyleSheet(
@@ -188,10 +197,11 @@ class _CompletionPopup(QListWidget):
     def populate(self, completions: list):
         self.clear()
         for c in completions[:30]:
-            icon  = self._TYPE_ICON.get(c.type, '·')
-            label = f"{icon}  {c.name}"
-            item  = QListWidgetItem(label)
+            ctype = getattr(c, 'type', '_doc')
+            icon  = self._TYPE_ICON.get(ctype, '·')
+            item  = QListWidgetItem(f"{icon}  {c.name}")
             item.setData(Qt.UserRole, c.complete)
+            item.setForeground(QColor(self._TYPE_COLOR.get(ctype, '#D4D4D4')))
             self.addItem(item)
         if self.count():
             self.setCurrentRow(0)
@@ -199,14 +209,19 @@ class _CompletionPopup(QListWidget):
             self.setFixedHeight(min(row_h * self.count() + 6, 200))
 
     def show_below_cursor(self):
-        rect = self._editor.cursorRect()
-        pos  = self._editor.viewport().mapToGlobal(rect.bottomLeft())
-        self.move(pos)
+        rect  = self._editor.cursorRect()
+        # cursorRect is in viewport coords — map to editor (parent) coords
+        pt    = self._editor.viewport().mapTo(self._editor, rect.bottomLeft())
+        pt.setY(pt.y() + 2)
+        # Flip above cursor if too close to bottom
+        if pt.y() + self.height() > self._editor.height() - 10:
+            pt.setY(self._editor.viewport().mapTo(self._editor, rect.topLeft()).y() - self.height() - 2)
+        self.move(pt)
+        self.raise_()
         self.show()
 
     def move_selection(self, delta: int):
-        row = max(0, min(self.currentRow() + delta, self.count() - 1))
-        self.setCurrentRow(row)
+        self.setCurrentRow(max(0, min(self.currentRow() + delta, self.count() - 1)))
 
     def accept_current(self):
         item = self.currentItem()
@@ -364,25 +379,56 @@ class _CodeEditor(QPlainTextEdit):
 
         cursor.endEditBlock()
 
+    def _current_prefix(self) -> str:
+        """Return the identifier fragment immediately before the cursor."""
+        import re
+        text = self.textCursor().block().text()
+        col  = self.textCursor().positionInBlock()
+        m    = re.search(r'[a-zA-Z_]\w*$', text[:col])
+        return m.group() if m else ''
+
+    def _doc_word_completions(self, prefix: str) -> list:
+        """Words already present in the document that start with prefix."""
+        import re
+        if len(prefix) < 2:
+            return []
+        words   = set(re.findall(r'\b[a-zA-Z_]\w*\b', self.toPlainText()))
+        matches = sorted(w for w in words if w.startswith(prefix) and w != prefix)
+
+        class _W:
+            def __init__(self, word, pfx):
+                self.name     = word
+                self.complete = word[len(pfx):]
+                self.type     = '_doc'
+        return [_W(w, prefix) for w in matches[:30]]
+
     def _request_completions(self):
-        try:
-            import jedi
-        except ImportError:
-            return
         code   = self.toPlainText()
         cursor = self.textCursor()
         line   = cursor.blockNumber() + 1
         col    = cursor.positionInBlock()
+        completions = []
+
+        # 1 — Jedi (type-aware, attribute completion after '.')
         try:
+            import jedi
             completions = jedi.Script(code).complete(line, col)
         except Exception:
-            self._popup.hide()
-            return
+            pass
+
+        # 2 — fallback: words from document (variables, functions defined above)
+        if not completions:
+            completions = self._doc_word_completions(self._current_prefix())
+
         if not completions:
             self._popup.hide()
             return
         self._popup.populate(completions)
         self._popup.show_below_cursor()
+
+    def focusOutEvent(self, event):
+        self._popup.hide()
+        super().focusOutEvent(event)
 
     def keyPressEvent(self, event):
         ctrl = bool(event.modifiers() & Qt.ControlModifier)
