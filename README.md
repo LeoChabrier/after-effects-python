@@ -2,7 +2,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-yellow.svg)](https://www.python.org/)
-[![After Effects](https://img.shields.io/badge/RenderMan-25+-red.svg)](https://www.adobe.com/fr/products/aftereffects.html)
+[![After Effects](https://img.shields.io/badge/After%20Effects-2025+-9999FF.svg)](https://www.adobe.com/fr/products/aftereffects.html)
+[![C++](https://img.shields.io/badge/C++-17-00599C.svg)](https://isocpp.org/)
 
 Python scripting inside Adobe After Effects — a live AEGP plugin with SDK bindings and a PySide6 script editor.
 
