@@ -16,4 +16,3 @@ setup(
     ],
     python_requires=">=3",  # Python version compatibility
 )
-
